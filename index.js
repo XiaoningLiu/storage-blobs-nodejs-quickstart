@@ -15,142 +15,70 @@
 //----------------------------------------------------------------------------------
 
 var fs = require('fs');
-var guid = require('uuid');
-var storage = require('azure-storage');
 var path = require('path');
+var readlineSync = require('readline-sync');
+var storage = require('azure-storage');
 var util = require('util');
+var uuid = require('uuid');
 
 // Create a blob client for interacting with the blob service from connection string
 // How to create a storage connection string - http://msdn.microsoft.com/en-us/library/azure/ee758697.aspx
 var connectionString = 'AzureStorageConnectionString';
 var blobService = storage.createBlobService(connectionString);
 
-var blockBlobContainerName = 'quickstartblobs-' + guid.v1();
-var localFileToUpload = 'HelloWorld-' + guid.v1() + '.txt';
-var blockBlobName = 'demoblockblob-' + localFileToUpload;
-var downloadedFileName = localFileToUpload.replace('.txt', '_DOWNLOADED.txt');
+// Azure Storage Node.js Client Library doesn't provide promise APIs currently
+// bluebird helps transforming callback style methods to support promise
+// The promisified method name will be the original method name suffixed with suffix "Async"
+// Refer to http://bluebirdjs.com/docs/api/promise.promisifyall.html
+var Promise = require('bluebird');
+Promise.promisifyAll(blobService);
 
+// Prepare upload and download file path related variables
+var LOCAL_FILE_TO_UPLOAD = 'HelloWorld-' + uuid.v1() + '.txt';
+var DOWNLOADED_FILE_NAME = LOCAL_FILE_TO_UPLOAD.replace('.txt', '_DOWNLOADED.txt');
 var USER_HOME = process.env[(process.platform == 'win32') ? 'USERPROFILE' : 'HOME'];
 var DOCUMENT_FOLDER = path.join(USER_HOME, 'Documents');
+var LOCAL_FILE_PATH = path.join(DOCUMENT_FOLDER, LOCAL_FILE_TO_UPLOAD);
+var DOWNLOADED_FILE_PATH = path.join(DOCUMENT_FOLDER, DOWNLOADED_FILE_NAME);
+var CONTAINER_NAME = 'quickstartblobs-' + uuid.v1();
+var BLOCK_BLOB_NAME = 'demoblockblob-' + LOCAL_FILE_TO_UPLOAD;
 if (!fs.existsSync(DOCUMENT_FOLDER)) { fs.mkdirSync(DOCUMENT_FOLDER); }
 
 console.log('Azure Storage Node.js Client Library Blobs Quick Start\n');
 
-// Create a container for organizing blobs within the storage account.
-console.log('1. Creating a Container with Public Access:', blockBlobContainerName, '\n');
-blobService.createContainerIfNotExists(blockBlobContainerName, { 'publicAccessLevel': 'blob' }, function (error) {
-    if (error) return callback(error);
-
-    // Create a file in ~/Documents to test the upload and download
-    console.log('2. Creating a file in Documents to test the upload and download\n');
-    var localPath = path.join(DOCUMENT_FOLDER, localFileToUpload);
-
-    console.log('Local File:', localPath, '\n');
-    fs.writeFileSync(localPath, 'Greetings from Microsoft!');
-
-    // Upload a BlockBlob to the newly created container
-    console.log('3. Uploading BlockBlob: ', blockBlobName, '\n');
-    blobService.createBlockBlobFromLocalFile(blockBlobContainerName, blockBlobName, localPath, function (error) {
-        if (error) return callback(error);
-        console.log('Uploaded blob URL:', blobService.getUrl(blockBlobContainerName, blockBlobName), '\n');
-
-        // List all the blobs in the container
-        console.log('4. Listing Blobs in Container\n');
-        listBlobs(blobService, blockBlobContainerName, null, null, null, function (error, results) {
-            if (error) return callback(error);
-
-            for (var i = 0; i < results.length; i++) {
-                console.log(util.format('   - %s (type: %s)'), results[i].name, results[i].blobType);
-            }
-            console.log('\n');
-
-            // Download a blob to your file system
-            console.log('5. Downloading Blob\n');
-
-            var downloadPath = path.join(DOCUMENT_FOLDER, downloadedFileName);
-            console.log('Downloaded File:', downloadPath, '\n');
-
-            blobService.getBlobToLocalFile(blockBlobContainerName, blockBlobName, downloadPath, function (error) {
-                if (error) return callback(error);
-
-                // Create a read-only snapshot of the blob
-                console.log('6. Creating a read-only snapshot of the blob\n');
-                blobService.createBlobSnapshot(blockBlobContainerName, blockBlobName, function (error, snapshotId) {
-                    if (error) return callback(error);
-                    console.log('snapshotId:', snapshotId, '\n');
-
-                    console.log('Sample finished running. When you hit <ENTER> key, the temporary files will be deleted and the sample application will exit.\n');
-                    process.stdin.once('data', function() {
-                        // Clean up after the demo. Deleting blobs are not necessary if you also delete the container. The code below simply shows how to do that.
-                        console.log('7. Deleting block Blob and all of its snapshots\n');
-                        var deleteOption = { deleteSnapshots: storage.BlobUtilities.SnapshotDeleteOptions.BLOB_AND_SNAPSHOTS };
-                        blobService.deleteBlob(blockBlobContainerName, blockBlobName, deleteOption, function (error) {
-                            try { fs.unlinkSync(downloadedImageName); } catch (e) { }
-                            if (error) return callback(error);
-
-                            // Delete the container
-                            console.log('8. Deleting Container\n');
-                            blobService.deleteContainerIfExists(blockBlobContainerName, function (error) {
-                                if (error) return callback(error);
-
-                                // Delete local files
-                                fs.unlinkSync(localPath);
-                                fs.unlinkSync(downloadPath);
-
-                                console.log('Press <ENTER> key to exit.');
-                                process.stdin.end();                    
-                            });
-                        });
-                    });
-                });
-            });
-        });
-    });
+console.log('1. Creating a container with public access:', CONTAINER_NAME, '\n');
+blobService.createContainerIfNotExistsAsync(CONTAINER_NAME, { 'publicAccessLevel': 'blob' }).then(function () {
+    console.log('2. Creating a file in ~/Documents folder to test the upload and download\n');
+    console.log('   Local File:', LOCAL_FILE_PATH, '\n');
+    fs.writeFileSync(LOCAL_FILE_PATH, 'Greetings from Microsoft!');
+}).then(function () {
+    console.log('3. Uploading BlockBlob:', BLOCK_BLOB_NAME, '\n');
+    console.log('   Uploaded Blob URL:', blobService.getUrl(CONTAINER_NAME, BLOCK_BLOB_NAME), '\n');
+    return blobService.createBlockBlobFromLocalFileAsync(CONTAINER_NAME, BLOCK_BLOB_NAME, LOCAL_FILE_PATH);
+}).then(function () {
+    console.log('4. Listing blobs in container\n');
+    return blobService.listBlobsSegmentedAsync(CONTAINER_NAME, null);
+}).then(function (data) {
+    for (var i = 0; i < data.entries.length; i++) {
+        console.log(util.format('   - %s (type: %s)'), data.entries[i].name, data.entries[i].blobType);
+    }
+    console.log('\n');
+}).then(function () {
+    console.log('5. Downloading blob\n');
+    console.log('   Downloaded File:', DOWNLOADED_FILE_PATH, '\n');
+    return blobService.getBlobToLocalFileAsync(CONTAINER_NAME, BLOCK_BLOB_NAME, DOWNLOADED_FILE_PATH);
+}).then(function () {
+    console.log('Sample finished running. When you hit <ENTER> key, the temporary files will be deleted and the sample application will exit.');
+    readlineSync.question('\n');
+}).then(function () {
+    console.log('6. Deleting block Blob\n');
+    return blobService.deleteBlobIfExistsAsync(CONTAINER_NAME, BLOCK_BLOB_NAME);
+}).then(function () {
+    console.log('7. Deleting container\n');
+    return blobService.deleteContainerIfExistsAsync(CONTAINER_NAME);
+}).then(function () {
+    fs.unlinkSync(LOCAL_FILE_PATH);
+    fs.unlinkSync(DOWNLOADED_FILE_PATH);
+}).catch(function (e) {
+    console.error('Exception thrown:\n', e);
 });
-
-/**
-* Lists blobs in the container.
-* @ignore
-*
-* @param {BlobService}        blobService                         The blob service client.
-* @param {string}             container                           The container name.
-* @param {object}             token                               A continuation token returned by a previous listing operation. 
-*                                                                 Please use 'null' or 'undefined' if this is the first operation.
-* @param {object}             [options]                           The request options.
-* @param {int}                [options.maxResults]                Specifies the maximum number of directories to return per call to Azure ServiceClient. 
-*                                                                 This does NOT affect list size returned by this function. (maximum: 5000)
-* @param {LocationMode}       [options.locationMode]              Specifies the location mode used to decide which location the request should be sent to. 
-*                                                                 Please see StorageUtilities.LocationMode for the possible values.
-* @param {int}                [options.timeoutIntervalInMs]       The server timeout interval, in milliseconds, to use for the request.
-* @param {int}                [options.maximumExecutionTimeInMs]  The maximum execution time, in milliseconds, across all potential retries, to use when making this request.
-*                                                                 The maximum execution time interval begins at the time that the client begins building the request. The maximum
-*                                                                 execution time is checked intermittently while performing requests, and before executing retries.
-* @param {string}             [options.clientRequestId]           A string that represents the client request ID with a 1KB character limit.
-* @param {bool}               [options.useNagleAlgorithm]         Determines whether the Nagle algorithm is used; true to use the Nagle algorithm; otherwise, false.
-*                                                                 The default value is false.
-* @param {errorOrResult}      callback                            `error` will contain information
-*                                                                 if an error occurs; otherwise `result` will contain `entries` and `continuationToken`. 
-*                                                                 `entries`  gives a list of directories and the `continuationToken` is used for the next listing operation.
-*                                                                 `response` will contain information related to this operation.
-*/
-function listBlobs(blobService, container, token, options, blobs, callback) {
-    blobs = blobs || [];
-
-    blobService.listBlobsSegmented(container, token, options, function (error, result) {
-        if (error) return callback(error);
-
-        blobs.push.apply(blobs, result.entries);
-        var token = result.continuationToken;
-        if (token) {
-            console.log('   Received a segment of results. There are(is) ' + result.entries.length + ' blob(s) on this segment.');
-            listBlobs(blobService, container, token, options, blobs, callback);
-        } else {
-            console.log('   Completed listing. There is(are) ' + blobs.length + ' blob(s).');
-            callback(null, blobs);
-        }
-    });
-}
-
-function callback(error) {
-    console.error('Some error happended:\n', error);
-}
